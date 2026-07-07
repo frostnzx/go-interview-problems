@@ -1,5 +1,9 @@
 package main
 
+import (
+	"fmt"
+)
+
 type Fetcher interface {
 	// Fetch returns the body of URL and
 	// a slice of URLs found on that page.
@@ -8,22 +12,39 @@ type Fetcher interface {
 
 // Crawl uses fetcher to recursively crawl
 // pages starting with url, to a maximum of depth.
-func Crawl(url string, depth int, fetcher Fetcher) ([]string, error) {
-	// TODO: Fetch URLs in parallel.
-	// TODO: Don't fetch the same URL twice.
-	// This implementation doesn't do either:
+func Crawl(url string, depth int, fetcher Fetcher, ch chan map[string]bool, flg chan bool) {
+	defer func() {
+		flg <- true
+	}()
+
 	if depth <= 0 {
-		return nil, nil
+		return
 	}
+
+	// check visited
+	// note : can use mutex instead
+	vis := <-ch
+	if vis[url] {
+		ch <- vis
+		return
+	}
+	vis[url] = true
+	ch <- vis
+
 	body, urls, err := fetcher.Fetch(url)
 	if err != nil {
-		return nil, err
+		fmt.Println(err)
+		return
 	}
-	result := []string{body}
+	fmt.Printf("found: %s %q\n", url, body)
+
+	flagWaitList := make([]chan bool, 0)
 	for _, u := range urls {
-		if res, err := Crawl(u, depth-1, fetcher); err == nil {
-			result = append(result, res...)
-		}
+		childFlg := make(chan bool, 1)
+		flagWaitList = append(flagWaitList, childFlg)
+		go Crawl(u, depth-1, fetcher, ch, childFlg)
 	}
-	return result, nil
+	for _, childFlg := range flagWaitList { // can use waitgroup instead
+		<-childFlg // wait for all child to finish
+	}
 }
